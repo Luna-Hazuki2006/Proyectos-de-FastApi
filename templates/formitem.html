@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<form method="post">
+    <label for="numero">Ingrese un número: </label>
+    <input type="number" name="numero" id="numero" required>
+    <button type="submit">Agregar</button>
+</form>
+
+<p>Resultado {{ result }}</p>
+{% endblock %}

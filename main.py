@@ -1,8 +1,15 @@
-from fastapi import FastAPI, Path, status
+from fastapi import FastAPI, Path, status, Request, Form
 from validaciones import Item
 from typing import Annotated, Any
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 
 app = FastAPI()
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+templates = Jinja2Templates(directory="templates")
 
 lista = [{'item_nombre': 'Uno'}, {'item_nombre': 'Dos'}, {'item_nombre': 'Tres'}]
 
@@ -10,9 +17,25 @@ lista = [{'item_nombre': 'Uno'}, {'item_nombre': 'Dos'}, {'item_nombre': 'Tres'}
 def home(): 
     return {'mensaje': 'Hola mundo'}
 
-@app.get('/itemsInt/{item_id}')
-async def read_item(item_id : int): 
-    return {'item_id': item_id}
+@app.get('/itemsInt/{id}', response_class=HTMLResponse)
+async def read_item(request : Request, id : str): 
+    return templates.TemplateResponse(
+        request=request, name="item.html", context={"id": id}
+    )
+
+@app.get('/form')
+def get_form(request : Request): 
+    result = "Ingrese un número"
+    return templates.TemplateResponse(
+        name="formitem.html", context={'request': request, 'result': result}
+    )
+
+@app.post('/form')
+def post_form(request : Request, numero : int = Form(...)): 
+    result = numero
+    return templates.TemplateResponse(
+        name="formitem.html", context={'request': request, 'result': result}
+    )
 
 @app.get('/items/{item_id}')
 async def read_item(item_id): 
