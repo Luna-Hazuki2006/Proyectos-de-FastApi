@@ -21,7 +21,7 @@ class Materia(BaseModel):
     costo : float
     profesores : list[Profesor] = []
     carga : int
-    prerrequisitos : list[BaseModel] = []
+    prerrequisitos : list = []
 
 materias : list[Materia] = []
 profesores : list[Profesor] = []
