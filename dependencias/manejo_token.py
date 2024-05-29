@@ -13,7 +13,7 @@ app = FastAPI()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-SECRET_KEY = "CLAVESECRETA"
+SECRET_KEY = "27A0D7C4CCCE76E6BE39225B7EEE8BD0EF890DE82D49E459F4C405C583080AB0"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -21,15 +21,17 @@ dummy_users_db = {
    "johndoe": {
     "username": "johndoe",
     "email": "johndoe@example.com",
+    "hashed_password": "secret",
     "full_name": "John Doe",
     "disabled": False
    },
    "alice": {
     "username": "alice",
     "email": "alice@example.com",
+    "hashed_password": "secret2",
     "full_name": "Alice Wonderson",
     "disabled": True
-   } 
+   }
 }
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -68,6 +70,9 @@ def get_user(db, username: str):
         user_dict = db[username]
         return UserInDB(**user_dict)
 
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
     user = dumb_decode_token(token)
     credentials_exception = HTTPException(
@@ -83,29 +88,30 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
         token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
-    user = get_user(dummy_users_db, username=token_data)
+    user = get_user(dummy_users_db, username=token_data.username)
     if user is None:
         raise credentials_exception
     return user
-
-def dumb_hash_password(password: str):
-    return "dumbhashed" + password
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
 def autheticate_user(fake_db, username: str, password: str):
-    user = get_user(fake_db, )
+    user = get_user(fake_db, username)
     if not user:
         return False
-    if not verify_password(password, user.hashed_password):
+    hashed_password = get_password_hash(user.hashed_password)
+    if not verify_password(password, hashed_password):
         return False
     return user
+
+@app.get("/users/me")
+async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
+    return current_user
 
 @app.post("/token")
 async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> Token:
     user = autheticate_user(dummy_users_db, form_data.username, form_data.password)
-    user = dummy_users_db.get(form_data.username)
     if not user:
         raise HTTPException(
             status_code= status.HTTP_401_UNAUTHORIZED,
@@ -115,6 +121,5 @@ async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm,
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    
     return Token(access_token= access_token, token_type= "bearer")
 

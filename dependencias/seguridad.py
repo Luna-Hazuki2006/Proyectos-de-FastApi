@@ -1,76 +1,125 @@
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Union
 from fastapi import Depends, FastAPI, HTTPException, status
+from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
 from pydantic import BaseModel
+
+# To get a string like this run
+# openssl rand -hex 32
 
 app = FastAPI()
 
-oath_sistema = OAuth2PasswordBearer(tokenUrl='token')
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-@app.get('/items')
-async def leer_items(token: Annotated[str, Depends(oath_sistema)]): 
-    return {'token': token}
+SECRET_KEY = "27A0D7C4CCCE76E6BE39225B7EEE8BD0EF890DE82D49E459F4C405C583080AB0"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-usuarios_falsos_bd = {
-    'Ana': {
-        'usuario' : 'Ana', 
-        'correo' : 'anapaulamendozadiaz2006@gmail.com', 
-        'nombre_completo' : 'Ana Paula Mendoza Díaz', 
-        'desabilitado' : True
-    }, 
-    'Luna': {
-        'usuario' : 'Luna', 
-        'correo' : 'lunahazuki2006@outlook.com', 
-        'nombre_completo' : 'Luna Hazuki', 
-        'desabilitado' : True
-    }
+dummy_users_db = {
+   "johndoe": {
+    "username": "johndoe",
+    "email": "johndoe@example.com",
+    "hashed_password": "secret",
+    "full_name": "John Doe",
+    "disabled": False
+   },
+   "alice": {
+    "username": "alice",
+    "email": "alice@example.com",
+    "hashed_password": "secret2",
+    "full_name": "Alice Wonderson",
+    "disabled": True
+   }
 }
 
-class Usuario(BaseModel): 
-    usuario : str
-    correo : Union[str, None] = None
-    nombre_completo : Union[str, None] = None
-    desabilitado : Union[bool, None] = None
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-class UsuarioBD(Usuario): 
-    contraseña_encriptada : str
+class User(BaseModel):
+    username: str
+    email: Union[str, None] = None
+    full_name: Union[str, None] = None
+    disabled: Union[bool, None] = None
 
-def obtener_usuario(bd, usuario : str): 
-    if usuario in bd: 
-        usuario_dic = bd[usuario]
-        return UsuarioBD(**usuario_dic)
+class UserInDB(User):
+    hashed_password: str
 
-def token_falso_decodificar(token): 
-    return Usuario(
-        usuario=token + 'codigofalso', 
-        correo='anapaulamendozadiaz2006@gmail.com', 
-        nombre_completo='Ana Paula Mendoza Díaz'
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Union[str, None] = None
+
+def create_access_token(data: dict, expires_delta: Union[timedelta, None] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def dumb_decode_token(token):
+    return User(username=token + "dummydecoded", email="john@example.com", full_name="John Doe")
+
+def get_user(db, username: str):
+    if username in db:
+        user_dict = db[username]
+        return UserInDB(**user_dict)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
+    user = dumb_decode_token(token)
+    credentials_exception = HTTPException(
+            status_code= status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
+    user = get_user(dummy_users_db, username=token_data.username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def autheticate_user(fake_db, username: str, password: str):
+    user = get_user(fake_db, username)
+    if not user:
+        return False
+    hashed_password = get_password_hash(user.hashed_password)
+    if not verify_password(password, hashed_password):
+        return False
+    return user
+
+@app.get("/users/me")
+async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
+    return current_user
+
+@app.post("/token")
+async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> Token:
+    user = autheticate_user(dummy_users_db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code= status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"})
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
     )
+    return Token(access_token= access_token, token_type= "bearer")
 
-def encriptado_token_falso(contraseña : str): 
-    return 'falsoencriptado' + contraseña
-
-async def obtner_usuario_actual(token : Annotated[str, Depends(oath_sistema)]): 
-    usuario = token_falso_decodificar(token)
-    return usuario
-
-@app.get('/usuario/yo')
-async def leer_usuario_yo(usuario_actual: Annotated[Usuario, Depends(obtner_usuario_actual)]): 
-    return usuario_actual 
-
-@app.post('/token')
-async def iniciar(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]): 
-    usuario_dic = usuarios_falsos_bd.get(form_data.username)
-    if not usuario_dic: 
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail='Usuario o contraseña incorrecta'
-        )
-    usuario = UsuarioBD(**usuario_dic)
-    contraseña_encriptada = encriptado_token_falso(form_data.password)
-    if not contraseña_encriptada == usuario.contraseña_encriptada: 
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail='Usuario o contraseña incorrecta'
-        )
-    return {'token_acceso': usuario.usuario, 'tipo_token': 'bearer'}
